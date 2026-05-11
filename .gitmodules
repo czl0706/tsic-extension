@@ -1,0 +1,3 @@
+[submodule "fixtures"]
+	path = fixtures
+	url = https://github.com/czl0706/tsic-dlab.git

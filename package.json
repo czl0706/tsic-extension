@@ -1,0 +1,135 @@
+{
+  "name": "playv-vscode",
+  "displayName": "playV",
+  "description": "VS Code sidebar for NYCU dlab Verilog problems.",
+  "version": "0.0.1",
+  "publisher": "local",
+  "icon": "resources/playV.png",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:playvProblems",
+    "onCommand:playv.refresh",
+    "onCommand:playv.clearAllResults",
+    "onCommand:playv.showDescription",
+    "onCommand:playv.openCode",
+    "onCommand:playv.runSimulation",
+    "onCommand:playv.openWaveform",
+    "onCommand:playv.openGoldenWaveform"
+  ],
+  "main": "./src/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "playV",
+      "properties": {
+        "playv.labsRoot": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the labs root. Relative paths resolve from the workspace folder. Falls back to LABSROOT, bundled fixtures, then /home/verilog/Desktop/dlab/public/labs."
+        },
+        "playv.iverilogPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional path to the iverilog executable. Falls back to PATH, with Winget and Scoop detection on Windows."
+        },
+        "playv.vvpPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional path to the vvp executable. Falls back to PATH, with Winget and Scoop detection on Windows."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "playv",
+          "title": "Problems",
+          "icon": "resources/playV.png"
+        }
+      ]
+    },
+    "views": {
+      "playv": [
+        {
+          "id": "playvProblems",
+          "name": "Problems"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "playv.refresh",
+        "title": "Refresh"
+      },
+      {
+        "command": "playv.clearAllResults",
+        "title": "Clear All Results"
+      },
+      {
+        "command": "playv.showDescription",
+        "title": "Show Description"
+      },
+      {
+        "command": "playv.openCode",
+        "title": "Open Code"
+      },
+      {
+        "command": "playv.runSimulation",
+        "title": "Run Simulation"
+      },
+      {
+        "command": "playv.openWaveform",
+        "title": "Open Waveform"
+      },
+      {
+        "command": "playv.openGoldenWaveform",
+        "title": "Open Golden Waveform"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "playv.refresh",
+          "when": "view == playvProblems",
+          "group": "navigation"
+        },
+        {
+          "command": "playv.clearAllResults",
+          "when": "view == playvProblems",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "playv.showDescription",
+          "when": "view == playvProblems && viewItem == playvProblem",
+          "group": "navigation@1"
+        },
+        {
+          "command": "playv.openCode",
+          "when": "view == playvProblems && viewItem == playvProblem",
+          "group": "navigation@2"
+        },
+        {
+          "command": "playv.runSimulation",
+          "when": "view == playvProblems && viewItem == playvProblem",
+          "group": "navigation@3"
+        },
+        {
+          "command": "playv.openWaveform",
+          "when": "view == playvProblems && viewItem == playvProblem",
+          "group": "navigation@4"
+        },
+        {
+          "command": "playv.openGoldenWaveform",
+          "when": "view == playvProblems && viewItem == playvProblem",
+          "group": "navigation@6"
+        }
+      ]
+    }
+  }
+}

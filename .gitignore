@@ -1,0 +1,3 @@
+*_bak
+fixtures/**/sim/*
+!fixtures/**/sim/.gitkeep
