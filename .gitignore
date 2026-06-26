@@ -1,3 +1,4 @@
 *_bak
 fixtures/**/sim/*
 !fixtures/**/sim/.gitkeep
+*.vsix

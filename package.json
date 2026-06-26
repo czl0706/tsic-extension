@@ -5,6 +5,9 @@
   "version": "0.0.1",
   "publisher": "local",
   "icon": "resources/playV.png",
+  "scripts": {
+    "package": "vsce package"
+  },
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -131,5 +134,10 @@
         }
       ]
     }
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/czl0706/tsic-extension.git"
+  },
+  "license": "MIT"
 }

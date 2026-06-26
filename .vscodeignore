@@ -1,0 +1,16 @@
+# Repository and local development files
+.git/**
+.gitmodules
+.vscode/**
+fixtures_bak/**
+
+# Packaged artifacts
+*.vsix
+
+# Common generated files
+node_modules/**
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
+Thumbs.db
