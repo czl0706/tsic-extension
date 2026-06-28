@@ -121,6 +121,7 @@ function activate(context) {
 
   context.subscriptions.push(vscode.commands.registerCommand("playv.refresh", () => {
     provider.refresh();
+    refreshManagedDescriptionStatuses();
   }));
 
   context.subscriptions.push(vscode.commands.registerCommand("playv.clearAllResults", async () => {
@@ -134,6 +135,7 @@ function activate(context) {
     const labsRoot = resolveLabsRoot(context.extensionPath);
     const removed = clearAllSimulationResults(labsRoot);
     provider.refresh();
+    refreshManagedDescriptionStatuses();
     vscode.window.showInformationMessage(`playV cleared ${removed} simulation result files.`);
   }));
 
@@ -167,6 +169,7 @@ function activate(context) {
       vscode.window.showErrorMessage(`playV simulation failed: ${error.message}`);
     } finally {
       provider.refresh();
+      refreshManagedDescriptionStatus(problem.fullPath);
     }
   }));
 
@@ -278,6 +281,24 @@ function rememberManagedPanel(problemPath, kind, panel) {
 
 function findManagedPanel(problemPath, kind) {
   return managedPanels.find((entry) => entry.problemPath === problemPath && entry.kind === kind)?.panel;
+}
+
+function refreshManagedDescriptionStatuses() {
+  for (const entry of managedPanels) {
+    if (entry.kind === "description") {
+      refreshManagedDescriptionStatus(entry.problemPath);
+    }
+  }
+}
+
+function refreshManagedDescriptionStatus(problemPath) {
+  const panel = findManagedPanel(problemPath, "description");
+  if (!panel) return;
+
+  panel.webview.postMessage({
+    command: "updateStatus",
+    status: readStatus(problemPath)
+  });
 }
 
 async function suggestVaporViewForWaveform() {
@@ -684,6 +705,7 @@ function showProblemDescription(context, problem) {
   const existingPanel = findManagedPanel(problem.fullPath, "description");
   if (existingPanel) {
     existingPanel.reveal(vscode.ViewColumn.One);
+    refreshManagedDescriptionStatus(problem.fullPath);
     return;
   }
 
@@ -766,6 +788,16 @@ function renderProblemDescription(webview, problem) {
       font-weight: 600;
       padding: 2px 8px;
     }
+    .status[data-status="PASS"] {
+      background: var(--vscode-testing-iconPassed);
+      border-color: var(--vscode-testing-iconPassed);
+      color: var(--vscode-editor-background);
+    }
+    .status[data-status="FAIL"] {
+      background: var(--vscode-testing-iconFailed);
+      border-color: var(--vscode-testing-iconFailed);
+      color: var(--vscode-editor-background);
+    }
     .actions {
       display: flex;
       flex-wrap: wrap;
@@ -844,7 +876,7 @@ function renderProblemDescription(webview, problem) {
   <div class="header">
     <div class="title-row">
       <h1>${escapeHtml(problem.labName)} / ${escapeHtml(problem.label)}</h1>
-      <span class="status">${escapeHtml(status)}</span>
+      <span id="problem-status" class="status" data-status="${escapeHtml(status)}">${escapeHtml(status)}</span>
     </div>
     <div class="actions">
       <button data-command="openCode">Open Code</button>
@@ -859,6 +891,16 @@ function renderProblemDescription(webview, problem) {
       button.addEventListener("click", () => {
         vscode.postMessage({ command: button.dataset.command });
       });
+    });
+    window.addEventListener("message", (event) => {
+      const message = event.data;
+      if (message.command !== "updateStatus") return;
+
+      const status = document.getElementById("problem-status");
+      if (!status) return;
+
+      status.textContent = message.status;
+      status.dataset.status = message.status;
     });
   </script>
 </body>
