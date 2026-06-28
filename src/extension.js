@@ -15,7 +15,12 @@ const DESCRIPTION_FILES = ["README.md", "description.md", "DESCRIPTION.md"];
 const STUDENT_OUTPUT_BEGIN = "##SEC_STUDENT_CAN_SEE";
 const STUDENT_OUTPUT_END = "##END_STUDENT_CAN_SEE";
 const VAPORVIEW_EXTENSION_ID = "lramseyer.vaporview";
+const VAPORVIEW_VIEW_TYPE = "vaporview.waveformViewer";
 const INSTALL_VAPORVIEW_ACTION = "Install VaporView";
+
+let activeProblemPath;
+const managedTabUrisByProblem = new Map();
+const managedPanels = [];
 
 class FolderItem extends vscode.TreeItem {
   constructor(label, fullPath) {
@@ -135,18 +140,21 @@ function activate(context) {
   context.subscriptions.push(vscode.commands.registerCommand("playv.showDescription", async (item) => {
     const problem = await requireProblem(item);
     if (!problem) return;
+    if (!(await ensureActiveProblem(problem))) return;
     showProblemDescription(context, problem);
   }));
 
   context.subscriptions.push(vscode.commands.registerCommand("playv.openCode", async (item) => {
     const problem = await requireProblem(item);
     if (!problem) return;
-    await openProblemCode(problem.fullPath);
+    if (!(await ensureActiveProblem(problem))) return;
+    await openProblemCode(problem);
   }));
 
   context.subscriptions.push(vscode.commands.registerCommand("playv.runSimulation", async (item) => {
     const problem = await requireProblem(item);
     if (!problem) return;
+    if (!(await ensureActiveProblem(problem))) return;
 
     output.clear();
     output.show(true);
@@ -172,8 +180,10 @@ function activate(context) {
       return;
     }
 
-    await suggestVaporViewForWaveform();
-    await vscode.commands.executeCommand("vscode.open", vscode.Uri.file(wavePath));
+    if (!(await ensureActiveProblem(problem))) return;
+    const waveUri = vscode.Uri.file(wavePath);
+    await openWaveformWithVaporView(waveUri);
+    rememberManagedTabUri(problem.fullPath, waveUri);
   }));
 
 
@@ -187,12 +197,88 @@ function activate(context) {
       return;
     }
 
-    await suggestVaporViewForWaveform();
-    await vscode.commands.executeCommand("vscode.open", vscode.Uri.file(wavePath));
+    if (!(await ensureActiveProblem(problem))) return;
+    const waveUri = vscode.Uri.file(wavePath);
+    await openWaveformWithVaporView(waveUri);
+    rememberManagedTabUri(problem.fullPath, waveUri);
   }));
 }
 
 function deactivate() {}
+
+async function ensureActiveProblem(problem) {
+  if (activeProblemPath === problem.fullPath) return true;
+
+  if (activeProblemPath) {
+    const didClose = await closeManagedProblemViews(activeProblemPath);
+    if (!didClose) return false;
+  }
+
+  activeProblemPath = problem.fullPath;
+  return true;
+}
+
+async function closeManagedProblemViews(problemPath) {
+  const uriSet = managedTabUrisByProblem.get(problemPath);
+  if (uriSet?.size) {
+    const tabsToClose = [];
+
+    for (const group of vscode.window.tabGroups.all) {
+      for (const tab of group.tabs) {
+        if (tabInputUris(tab).some((uri) => uriSet.has(uri.toString()))) {
+          tabsToClose.push(tab);
+        }
+      }
+    }
+
+    if (tabsToClose.length > 0) {
+      const didClose = await vscode.window.tabGroups.close(tabsToClose, true);
+      if (!didClose) return false;
+    }
+  }
+
+  const panelsToClose = managedPanels.filter((entry) => entry.problemPath === problemPath);
+  for (const entry of panelsToClose) {
+    entry.panel.dispose();
+  }
+
+  managedTabUrisByProblem.delete(problemPath);
+  for (let i = managedPanels.length - 1; i >= 0; i--) {
+    if (managedPanels[i].problemPath === problemPath) {
+      managedPanels.splice(i, 1);
+    }
+  }
+
+  return true;
+}
+
+function tabInputUris(tab) {
+  const input = tab.input;
+  return [input?.uri, input?.original, input?.modified].filter(Boolean);
+}
+
+function rememberManagedTabUri(problemPath, uri) {
+  let uriSet = managedTabUrisByProblem.get(problemPath);
+  if (!uriSet) {
+    uriSet = new Set();
+    managedTabUrisByProblem.set(problemPath, uriSet);
+  }
+  uriSet.add(uri.toString());
+}
+
+function rememberManagedPanel(problemPath, kind, panel) {
+  managedPanels.push({ problemPath, kind, panel });
+  panel.onDidDispose(() => {
+    const index = managedPanels.findIndex((entry) => entry.panel === panel);
+    if (index >= 0) {
+      managedPanels.splice(index, 1);
+    }
+  });
+}
+
+function findManagedPanel(problemPath, kind) {
+  return managedPanels.find((entry) => entry.problemPath === problemPath && entry.kind === kind)?.panel;
+}
 
 async function suggestVaporViewForWaveform() {
   if (vscode.extensions.getExtension(VAPORVIEW_EXTENSION_ID)) return;
@@ -206,6 +292,17 @@ async function suggestVaporViewForWaveform() {
   if (choice === INSTALL_VAPORVIEW_ACTION) {
     await vscode.commands.executeCommand("workbench.extensions.installExtension", VAPORVIEW_EXTENSION_ID);
   }
+}
+
+async function openWaveformWithVaporView(waveUri) {
+  const hasVaporView = vscode.extensions.getExtension(VAPORVIEW_EXTENSION_ID);
+  if (!hasVaporView) {
+    await suggestVaporViewForWaveform();
+    await vscode.commands.executeCommand("vscode.open", waveUri);
+    return;
+  }
+
+  await vscode.commands.executeCommand("vscode.openWith", waveUri, VAPORVIEW_VIEW_TYPE);
 }
 
 function resolveLabsRoot(extensionPath) {
@@ -567,21 +664,29 @@ async function requireProblem(item) {
   return undefined;
 }
 
-async function openProblemCode(problemPath) {
-  const verilogFiles = listVerilogFiles(problemPath)
+async function openProblemCode(problem) {
+  const verilogFiles = listVerilogFiles(problem.fullPath)
     .filter((filePath) => path.basename(filePath) !== TESTBENCH_FILE);
 
   if (verilogFiles.length === 0) {
-    await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(problemPath));
+    await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(problem.fullPath));
     return;
   }
 
   for (const filePath of verilogFiles) {
-    await vscode.window.showTextDocument(vscode.Uri.file(filePath), { preview: false });
+    const fileUri = vscode.Uri.file(filePath);
+    await vscode.window.showTextDocument(fileUri, { preview: false });
+    rememberManagedTabUri(problem.fullPath, fileUri);
   }
 }
 
 function showProblemDescription(context, problem) {
+  const existingPanel = findManagedPanel(problem.fullPath, "description");
+  if (existingPanel) {
+    existingPanel.reveal(vscode.ViewColumn.One);
+    return;
+  }
+
   const title = `${problem.labName}/${problem.label}`;
   const panel = vscode.window.createWebviewPanel(
     "playvDescription",
@@ -593,6 +698,7 @@ function showProblemDescription(context, problem) {
     }
   );
 
+  rememberManagedPanel(problem.fullPath, "description", panel);
   panel.webview.html = renderProblemDescription(panel.webview, problem);
   panel.webview.onDidReceiveMessage(async (message) => {
     if (message.command === "openCode") {

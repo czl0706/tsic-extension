@@ -1,7 +1,7 @@
 {
   "name": "playv-vscode",
   "displayName": "playV",
-  "description": "VS Code sidebar for NYCU dlab Verilog problems.",
+  "description": "playV playground for NYCU dlab Verilog practice.",
   "version": "0.0.1",
   "publisher": "local",
   "icon": "resources/playV.png",
@@ -50,7 +50,7 @@
       "activitybar": [
         {
           "id": "playv",
-          "title": "Problems",
+          "title": "playV",
           "icon": "resources/playV.png"
         }
       ]
@@ -59,7 +59,7 @@
       "playv": [
         {
           "id": "playvProblems",
-          "name": "Problems"
+          "name": "playV"
         }
       ]
     },
