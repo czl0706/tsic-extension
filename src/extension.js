@@ -161,15 +161,37 @@ function activate(context) {
     output.clear();
     output.show(true);
 
+    let simulationError;
+    let attemptedSimulation = false;
+
     try {
+      await closeOpenWaveformForSimulation(problem, output);
+      attemptedSimulation = true;
       await runIverilogSimulation(problem, output);
     } catch (error) {
-      output.appendLine("");
-      output.appendLine(`[playV] ${error.message}`);
-      vscode.window.showErrorMessage(`playV simulation failed: ${error.message}`);
+      simulationError = error;
     } finally {
       provider.refresh();
       refreshManagedDescriptionStatus(problem.fullPath);
+
+      if (attemptedSimulation) {
+        try {
+          await reopenLatestWaveform(problem, output);
+        } catch (error) {
+          if (!simulationError) {
+            simulationError = error;
+          } else {
+            output.appendLine("");
+            output.appendLine(`[playV] waveform reopen failed: ${error.message}`);
+          }
+        }
+      }
+    }
+
+    if (simulationError) {
+      output.appendLine("");
+      output.appendLine(`[playV] ${simulationError.message}`);
+      vscode.window.showErrorMessage(`playV simulation failed: ${simulationError.message}`);
     }
   }));
 
@@ -281,6 +303,90 @@ function rememberManagedPanel(problemPath, kind, panel) {
 
 function findManagedPanel(problemPath, kind) {
   return managedPanels.find((entry) => entry.problemPath === problemPath && entry.kind === kind)?.panel;
+}
+
+async function closeOpenWaveformForSimulation(problem, output) {
+  const wavePath = findExistingWaveform(problem.fullPath);
+  const waveUri = vscode.Uri.file(wavePath);
+  const didClose = await closeTabsForUri(waveUri);
+
+  if (didClose) {
+    output.appendLine(`[playV] closed open waveform: ${relativeForLog(problem.fullPath, wavePath)}`);
+  }
+
+  await waitForFileUnlock(wavePath);
+}
+
+async function closeTabsForUri(targetUri) {
+  const target = targetUri.toString();
+  const tabsToClose = [];
+
+  for (const group of vscode.window.tabGroups.all) {
+    for (const tab of group.tabs) {
+      if (tabInputUris(tab).some((uri) => uri.toString() === target)) {
+        tabsToClose.push(tab);
+      }
+    }
+  }
+
+  if (tabsToClose.length === 0) return false;
+
+  const didClose = await vscode.window.tabGroups.close(tabsToClose, true);
+  if (!didClose) {
+    throw new Error("Closing the open waveform tab was canceled.");
+  }
+
+  return true;
+}
+
+async function waitForFileUnlock(filePath, timeoutMs = 2000) {
+  if (!fs.existsSync(filePath)) return;
+
+  const lockTestPath = `${filePath}.locktest`;
+  const startedAt = Date.now();
+  let lastError;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      if (fs.existsSync(lockTestPath)) {
+        fs.rmSync(lockTestPath, { force: true });
+      }
+
+      fs.renameSync(filePath, lockTestPath);
+      fs.renameSync(lockTestPath, filePath);
+      return;
+    } catch (error) {
+      lastError = error;
+      restoreLockTestFile(filePath, lockTestPath);
+      await sleep(100);
+    }
+  }
+
+  throw new Error(`Waveform file is still locked: ${filePath}${lastError?.message ? ` (${lastError.message})` : ""}`);
+}
+
+function restoreLockTestFile(filePath, lockTestPath) {
+  if (fs.existsSync(filePath) || !fs.existsSync(lockTestPath)) return;
+
+  try {
+    fs.renameSync(lockTestPath, filePath);
+  } catch {
+    // Best effort recovery; the next retry will report the remaining lock.
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function reopenLatestWaveform(problem, output) {
+  const wavePath = findExistingWaveform(problem.fullPath);
+  if (!fs.existsSync(wavePath)) return;
+
+  const waveUri = vscode.Uri.file(wavePath);
+  await openWaveformWithVaporView(waveUri);
+  rememberManagedTabUri(problem.fullPath, waveUri);
+  output.appendLine(`[playV] opened waveform: ${relativeForLog(problem.fullPath, wavePath)}`);
 }
 
 function refreshManagedDescriptionStatuses() {
