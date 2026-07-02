@@ -822,12 +822,15 @@ function showProblemDescription(context, problem) {
     vscode.ViewColumn.One,
     {
       enableScripts: true,
-      localResourceRoots: [vscode.Uri.file(problem.fullPath)]
+      localResourceRoots: [
+        vscode.Uri.file(problem.fullPath),
+        vscode.Uri.joinPath(context.extensionUri, "media")
+      ]
     }
   );
 
   rememberManagedPanel(problem.fullPath, "description", panel);
-  panel.webview.html = renderProblemDescription(panel.webview, problem);
+  panel.webview.html = renderProblemDescription(panel.webview, problem, context.extensionUri);
   panel.webview.onDidReceiveMessage(async (message) => {
     if (message.command === "openCode") {
       await vscode.commands.executeCommand("playv.openCode", problem);
@@ -841,11 +844,12 @@ function showProblemDescription(context, problem) {
   }, undefined, context.subscriptions);
 }
 
-function renderProblemDescription(webview, problem) {
+function renderProblemDescription(webview, problem, extensionUri) {
   const status = readStatus(problem.fullPath);
   const description = readProblemDescription(problem.fullPath) || buildFallbackDescription(problem);
   const nonce = getNonce();
-  const body = markdownToHtml(description);
+  const markdownItUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "markdown-it.min.js"));
+  const mermaidUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "mermaid.min.js"));
   const goldenButtons = hasGoldenDirectory(problem.fullPath)
     ? `
       <button data-command="openGoldenWaveform" class="secondary">Golden Waveform</button>`
@@ -855,7 +859,7 @@ function renderProblemDescription(webview, problem) {
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src ${webview.cspSource} 'nonce-${nonce}'; img-src ${webview.cspSource} data:; font-src ${webview.cspSource} data:;">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${escapeHtml(problem.label)}</title>
   <style>
@@ -976,6 +980,48 @@ function renderProblemDescription(webview, problem) {
       border-top: 1px solid var(--vscode-panel-border);
       margin: 24px 0;
     }
+    h3 {
+      font-size: 16px;
+      margin-top: 22px;
+    }
+    h4,
+    h5,
+    h6 {
+      font-size: 14px;
+      margin-top: 18px;
+    }
+    strong {
+      font-weight: 600;
+    }
+    ul,
+    ol {
+      padding-left: 24px;
+    }
+    li {
+      margin: 3px 0;
+    }
+    li > ul,
+    li > ol {
+      margin: 3px 0;
+    }
+    blockquote {
+      border-left: 3px solid var(--vscode-panel-border);
+      color: var(--vscode-descriptionForeground);
+      margin: 14px 0;
+      padding: 2px 0 2px 14px;
+    }
+    img {
+      max-width: 100%;
+    }
+    .mermaid {
+      background: transparent;
+      margin: 18px 0;
+      text-align: center;
+    }
+    .mermaid svg {
+      max-width: 100%;
+      height: auto;
+    }
   </style>
 </head>
 <body>
@@ -990,7 +1036,9 @@ function renderProblemDescription(webview, problem) {
       <button data-command="openWaveform" class="secondary">Open Waveform</button>${goldenButtons}
     </div>
   </div>
-  <main class="content"><h2>Problem Description</h2>${body}</main>
+  <main class="content" id="description-content"></main>
+  <script src="${markdownItUri}"></script>
+  <script src="${mermaidUri}"></script>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     document.querySelectorAll("button[data-command]").forEach((button) => {
@@ -1008,6 +1056,55 @@ function renderProblemDescription(webview, problem) {
       status.textContent = message.status;
       status.dataset.status = message.status;
     });
+
+    const MD_SOURCE = ${JSON.stringify(description).replace(/</g, "\\u003c")};
+    const container = document.getElementById("description-content");
+
+    function renderDescription() {
+      try {
+        const md = window.markdownit({ html: false, linkify: true, typographer: true });
+        const defaultFence = md.renderer.rules.fence
+          || function (tokens, idx, options, env, self) { return self.renderToken(tokens, idx, options); };
+        md.renderer.rules.fence = function (tokens, idx, options, env, self) {
+          const token = tokens[idx];
+          const info = (token.info || "").trim().split(/\\s+/)[0];
+          if (info === "mermaid") {
+            const code = token.content;
+            const escaped = code
+              .replace(/&/g, "&amp;")
+              .replace(/</g, "&lt;")
+              .replace(/>/g, "&gt;");
+            return '<pre class="mermaid">' + escaped + "</pre>";
+          }
+          return defaultFence(tokens, idx, options, env, self);
+        };
+        container.innerHTML = md.render(MD_SOURCE);
+      } catch (error) {
+        const pre = document.createElement("pre");
+        pre.textContent = MD_SOURCE;
+        container.replaceChildren(pre);
+      }
+    }
+
+    function mermaidTheme() {
+      const cls = document.body.classList;
+      if (cls.contains("vscode-high-contrast")) return "neutral";
+      if (cls.contains("vscode-light")) return "default";
+      return "dark";
+    }
+
+    async function renderMermaid() {
+      if (!window.mermaid) return;
+      try {
+        window.mermaid.initialize({ startOnLoad: false, theme: mermaidTheme(), securityLevel: "loose" });
+        await window.mermaid.run({ querySelector: ".mermaid" });
+      } catch (error) {
+        // Leave the raw diagram source visible if rendering fails.
+      }
+    }
+
+    renderDescription();
+    renderMermaid();
   </script>
 </body>
 </html>`;
@@ -1046,126 +1143,6 @@ function listVerilogFiles(designPath) {
 
 function relativeForLog(fromPath, targetPath) {
   return path.relative(fromPath, targetPath) || targetPath;
-}
-
-function markdownToHtml(markdown) {
-  const lines = markdown.replace(/\r\n/g, "\n").split("\n");
-  const html = [];
-  let inCodeBlock = false;
-  let inList = false;
-
-  for (let index = 0; index < lines.length; index++) {
-    const rawLine = lines[index];
-    const line = rawLine.trimEnd();
-
-    if (line.startsWith("```")) {
-      if (inList) {
-        html.push("</ul>");
-        inList = false;
-      }
-      html.push(inCodeBlock ? "</code></pre>" : "<pre><code>");
-      inCodeBlock = !inCodeBlock;
-      continue;
-    }
-
-    if (inCodeBlock) {
-      html.push(`${escapeHtml(rawLine)}\n`);
-      continue;
-    }
-
-    if (!line.trim()) {
-      if (inList) {
-        html.push("</ul>");
-        inList = false;
-      }
-      continue;
-    }
-
-    if (/^\s*---+\s*$/.test(line)) {
-      if (inList) {
-        html.push("</ul>");
-        inList = false;
-      }
-      html.push("<hr>");
-      continue;
-    }
-
-    if (isMarkdownTableStart(lines, index)) {
-      if (inList) {
-        html.push("</ul>");
-        inList = false;
-      }
-
-      const headers = splitMarkdownTableRow(lines[index]);
-      html.push("<table>");
-      html.push(`<thead><tr>${headers.map((cell) => `<th>${inlineMarkdown(cell)}</th>`).join("")}</tr></thead>`);
-      html.push("<tbody>");
-      index += 2;
-
-      while (index < lines.length && isMarkdownTableRow(lines[index])) {
-        const cells = splitMarkdownTableRow(lines[index]);
-        html.push(`<tr>${cells.map((cell) => `<td>${inlineMarkdown(cell)}</td>`).join("")}</tr>`);
-        index++;
-      }
-
-      html.push("</tbody></table>");
-      index--;
-      continue;
-    }
-
-    const heading = line.match(/^(#{1,3})\s+(.+)$/);
-    if (heading) {
-      if (inList) {
-        html.push("</ul>");
-        inList = false;
-      }
-      const level = heading[1].length;
-      html.push(`<h${level}>${inlineMarkdown(heading[2])}</h${level}>`);
-      continue;
-    }
-
-    const bullet = line.match(/^-\s+(.+)$/);
-    if (bullet) {
-      if (!inList) {
-        html.push("<ul>");
-        inList = true;
-      }
-      html.push(`<li>${inlineMarkdown(bullet[1])}</li>`);
-      continue;
-    }
-
-    if (inList) {
-      html.push("</ul>");
-      inList = false;
-    }
-    html.push(`<p>${inlineMarkdown(line)}</p>`);
-  }
-
-  if (inList) html.push("</ul>");
-  if (inCodeBlock) html.push("</code></pre>");
-  return html.join("\n");
-}
-
-function isMarkdownTableStart(lines, index) {
-  return index + 1 < lines.length && isMarkdownTableRow(lines[index]) && isMarkdownTableSeparator(lines[index + 1]);
-}
-
-function isMarkdownTableRow(line) {
-  const trimmed = line.trim();
-  return trimmed.startsWith("|") && trimmed.endsWith("|") && trimmed.slice(1, -1).includes("|");
-}
-
-function isMarkdownTableSeparator(line) {
-  if (!isMarkdownTableRow(line)) return false;
-  return splitMarkdownTableRow(line).every((cell) => /^:?-{3,}:?$/.test(cell.trim()));
-}
-
-function splitMarkdownTableRow(line) {
-  return line.trim().slice(1, -1).split("|").map((cell) => cell.trim());
-}
-
-function inlineMarkdown(text) {
-  return escapeHtml(text).replace(/`([^`]+)`/g, "<code>$1</code>");
 }
 
 function escapeHtml(value) {
