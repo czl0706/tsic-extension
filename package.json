@@ -17,6 +17,7 @@
   "activationEvents": [
     "onView:playvProblems",
     "onCommand:playv.refresh",
+    "onCommand:playv.updateProblems",
     "onCommand:playv.clearAllResults",
     "onCommand:playv.showDescription",
     "onCommand:playv.openCode",
@@ -32,7 +33,12 @@
         "playv.labsRoot": {
           "type": "string",
           "default": "",
-          "description": "Path to the labs root. Relative paths resolve from the workspace folder. Falls back to LABSROOT, bundled fixtures, then /home/verilog/Desktop/dlab/public/labs."
+          "description": "Path to the labs root. Relative paths resolve from the workspace folder. Falls back to the managed problem clone, this setting, LABSROOT, bundled problems, then /home/verilog/Desktop/dlab/public/labs."
+        },
+        "playv.problemsRepository": {
+          "type": "string",
+          "default": "https://github.com/czl0706/tsic-dlab.git",
+          "description": "Git repository used by the Update Problems command."
         },
         "playv.iverilogPath": {
           "type": "string",
@@ -69,6 +75,11 @@
         "title": "Refresh"
       },
       {
+        "command": "playv.updateProblems",
+        "title": "Update Problems",
+        "icon": "$(cloud-download)"
+      },
+      {
         "command": "playv.clearAllResults",
         "title": "Clear All Results"
       },
@@ -97,6 +108,11 @@
       "view/title": [
         {
           "command": "playv.refresh",
+          "when": "view == playvProblems",
+          "group": "navigation"
+        },
+        {
+          "command": "playv.updateProblems",
           "when": "view == playvProblems",
           "group": "navigation"
         },

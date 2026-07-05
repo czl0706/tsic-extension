@@ -3,6 +3,8 @@
 .gitmodules
 .vscode/**
 fixtures_bak/**
+problems/**/sim/**
+!problems/tutorial/**/sim/**
 
 # Packaged artifacts
 *.vsix

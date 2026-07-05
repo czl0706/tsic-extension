@@ -4,7 +4,7 @@ Local VS Code sidebar for dlab Verilog problems.
 
 ## Features
 
-- Scans labs and problems from `playv.labsRoot` or `LABSROOT`.
+- Scans labs and problems from the managed problem clone, `playv.labsRoot`, or `LABSROOT`.
 - Shows `PASS`, `FAIL`, or `NULL` from `sim/result.txt`.
 - Opens root-level `*.v` and `*.sv` files directly in VS Code.
 - Provides a simulation placeholder command for the future runner.
@@ -18,16 +18,16 @@ Set `playv.labsRoot` to your labs directory, for example:
 
 ```json
 {
-  "playv.labsRoot": "fixtures"
+  "playv.labsRoot": "problems"
 }
 ```
 
 `playv.labsRoot` can be:
 
 - An absolute path, such as `/home/verilog/Desktop/dlab/public/labs`.
-- A workspace-relative path, such as `fixtures/labs`.
+- A workspace-relative path, such as `problems/labs`.
 - An environment-expanded path, such as `${env:LABSROOT}`.
-- Omitted, in which case the extension falls back to `LABSROOT`, bundled fixtures, then `/home/verilog/Desktop/dlab/public/labs`.
+- Omitted, in which case the extension falls back to the managed problem clone, `LABSROOT`, bundled problems, then `/home/verilog/Desktop/dlab/public/labs`.
 
 On Ubuntu/Debian, install the simulator with:
 

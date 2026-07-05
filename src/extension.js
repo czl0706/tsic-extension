@@ -17,6 +17,7 @@ const STUDENT_OUTPUT_END = "##END_STUDENT_CAN_SEE";
 const VAPORVIEW_EXTENSION_ID = "lramseyer.vaporview";
 const VAPORVIEW_VIEW_TYPE = "vaporview.waveformViewer";
 const INSTALL_VAPORVIEW_ACTION = "Install VaporView";
+const DEFAULT_PROBLEMS_REPOSITORY = "https://github.com/czl0706/tsic-dlab.git";
 
 let activeProblemPath;
 const managedTabUrisByProblem = new Map();
@@ -64,15 +65,16 @@ class ProblemActionItem extends vscode.TreeItem {
 }
 
 class ProblemsProvider {
-  constructor(extensionPath) {
+  constructor(extensionPath, managedProblemsRoot) {
     this.extensionPath = extensionPath;
+    this.managedProblemsRoot = managedProblemsRoot;
     this._onDidChangeTreeData = new vscode.EventEmitter();
     this.onDidChangeTreeData = this._onDidChangeTreeData.event;
     this.labs = [];
   }
 
   refresh() {
-    this.labs = scanTree(resolveLabsRoot(this.extensionPath));
+    this.labs = scanTree(resolveLabsRoot(this.extensionPath, this.managedProblemsRoot));
     this._onDidChangeTreeData.fire();
   }
 
@@ -82,7 +84,7 @@ class ProblemsProvider {
 
   getChildren(element) {
     if (!element) {
-      this.labs = scanTree(resolveLabsRoot(this.extensionPath));
+      this.labs = scanTree(resolveLabsRoot(this.extensionPath, this.managedProblemsRoot));
       return this.labs.map((entry) => treeEntryToItem(entry));
     }
 
@@ -114,7 +116,8 @@ class ProblemsProvider {
 
 function activate(context) {
   const output = vscode.window.createOutputChannel("playV");
-  const provider = new ProblemsProvider(context.extensionPath);
+  const managedProblemsRoot = getManagedProblemsRoot(context);
+  const provider = new ProblemsProvider(context.extensionPath, managedProblemsRoot);
 
   context.subscriptions.push(output);
   context.subscriptions.push(vscode.window.registerTreeDataProvider("playvProblems", provider));
@@ -122,6 +125,18 @@ function activate(context) {
   context.subscriptions.push(vscode.commands.registerCommand("playv.refresh", () => {
     provider.refresh();
     refreshManagedDescriptionStatuses();
+  }));
+
+  context.subscriptions.push(vscode.commands.registerCommand("playv.updateProblems", async () => {
+    try {
+      await updateProblems(context, output);
+      provider.refresh();
+      refreshManagedDescriptionStatuses();
+    } catch (error) {
+      output.appendLine("");
+      output.appendLine(`[playV] update failed: ${error.message}`);
+      vscode.window.showErrorMessage(`playV problem update failed: ${error.message}`);
+    }
   }));
 
   context.subscriptions.push(vscode.commands.registerCommand("playv.clearAllResults", async () => {
@@ -132,11 +147,14 @@ function activate(context) {
     );
     if (answer !== "Clear Results") return;
 
-    const labsRoot = resolveLabsRoot(context.extensionPath);
-    const removed = clearAllSimulationResults(labsRoot);
+    const labsRoot = resolveLabsRoot(context.extensionPath, managedProblemsRoot);
+    const resetGitResults = isGitRepository(labsRoot);
+    const removed = await clearAllSimulationResults(labsRoot, output);
     provider.refresh();
     refreshManagedDescriptionStatuses();
-    vscode.window.showInformationMessage(`playV cleared ${removed} simulation result files.`);
+    vscode.window.showInformationMessage(
+      resetGitResults ? "playV reset simulation results." : `playV cleared ${removed} simulation result files.`
+    );
   }));
 
   context.subscriptions.push(vscode.commands.registerCommand("playv.showDescription", async (item) => {
@@ -432,17 +450,104 @@ async function openWaveformWithVaporView(waveUri) {
   await vscode.commands.executeCommand("vscode.openWith", waveUri, VAPORVIEW_VIEW_TYPE);
 }
 
-function resolveLabsRoot(extensionPath) {
-  const configured = resolveConfiguredPath(vscode.workspace.getConfiguration("playv").get("labsRoot", ""), extensionPath);
-  const bundledFixture = path.join(extensionPath, "fixtures");
-  const legacyBundledFixture = path.join(extensionPath, "fixtures", "labs");
+function getManagedProblemsRoot(context) {
+  return path.join(context.globalStorageUri.fsPath, "problems");
+}
 
+async function updateProblems(context, output) {
+  const repositoryUrl = vscode.workspace.getConfiguration("playv").get("problemsRepository", DEFAULT_PROBLEMS_REPOSITORY);
+  const labsRoot = getManagedProblemsRoot(context);
+  const parentPath = path.dirname(labsRoot);
+
+  output.clear();
+  output.show(true);
+  output.appendLine(`[playV] problems repository: ${repositoryUrl}`);
+  output.appendLine(`[playV] managed problems path: ${labsRoot}`);
+
+  fs.mkdirSync(parentPath, { recursive: true });
+
+  if (!fs.existsSync(path.join(labsRoot, ".git"))) {
+    if (fs.existsSync(labsRoot) && fs.readdirSync(labsRoot).length > 0) {
+      throw new Error(`Managed problems path exists but is not a git repository: ${labsRoot}`);
+    }
+
+    output.appendLine("[playV] cloning problems...");
+    await runGitCommand(["clone", repositoryUrl, labsRoot], parentPath, output);
+  } else {
+    output.appendLine("[playV] pulling latest problems...");
+    await runGitCommand(["-C", labsRoot, "pull", "--ff-only"], parentPath, output);
+  }
+
+  const commit = await readGitOutput(["-C", labsRoot, "rev-parse", "--short", "HEAD"], parentPath);
+  output.appendLine("");
+  output.appendLine(`[playV] problems are up to date at ${commit}.`);
+  vscode.window.showInformationMessage(`playV problems updated (${commit}).`);
+}
+
+function runGitCommand(args, cwd, output) {
+  return new Promise((resolve, reject) => {
+    const child = spawn("git", args, { cwd, shell: false });
+
+    child.stdout.on("data", (chunk) => output.append(chunk.toString()));
+    child.stderr.on("data", (chunk) => output.append(chunk.toString()));
+    child.on("error", (error) => {
+      if (error.code === "ENOENT") {
+        reject(new Error("git was not found. Install Git and make sure it is available in PATH."));
+        return;
+      }
+      reject(error);
+    });
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`git ${args.join(" ")} exited with code ${code}.`));
+      }
+    });
+  });
+}
+
+function readGitOutput(args, cwd) {
+  return new Promise((resolve, reject) => {
+    const child = spawn("git", args, { cwd, shell: false });
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", (error) => {
+      if (error.code === "ENOENT") {
+        reject(new Error("git was not found. Install Git and make sure it is available in PATH."));
+        return;
+      }
+      reject(error);
+    });
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve(stdout.trim());
+      } else {
+        reject(new Error((stderr || stdout).trim() || `git ${args.join(" ")} exited with code ${code}.`));
+      }
+    });
+  });
+}
+
+function resolveLabsRoot(extensionPath, managedProblemsRoot = "") {
+  const configured = resolveConfiguredPath(vscode.workspace.getConfiguration("playv").get("labsRoot", ""), extensionPath);
+  const bundledProblems = path.join(extensionPath, "problems");
+  const legacyBundledProblems = path.join(extensionPath, "problems", "labs");
+
+  if (managedProblemsRoot && fs.existsSync(path.join(managedProblemsRoot, ".git"))) return managedProblemsRoot;
   if (configured && fs.existsSync(configured)) return configured;
   const migratedConfigured = resolveMigratedLabsRoot(configured);
   if (migratedConfigured) return migratedConfigured;
   if (process.env.LABSROOT && fs.existsSync(process.env.LABSROOT)) return process.env.LABSROOT;
-  if (fs.existsSync(bundledFixture)) return bundledFixture;
-  if (fs.existsSync(legacyBundledFixture)) return legacyBundledFixture;
+  if (fs.existsSync(bundledProblems)) return bundledProblems;
+  if (fs.existsSync(legacyBundledProblems)) return legacyBundledProblems;
 
   return configured || process.env.LABSROOT || "/home/verilog/Desktop/dlab/public/labs";
 }
@@ -451,9 +556,13 @@ function resolveMigratedLabsRoot(configured) {
   if (!configured) return "";
 
   const parent = path.dirname(configured);
-  if (path.basename(configured).toLowerCase() === "labs" && path.basename(parent).toLowerCase() === "fixtures" && fs.existsSync(parent)) {
+  const parentName = path.basename(parent).toLowerCase();
+  if (path.basename(configured).toLowerCase() === "labs" && ["fixtures", "problems"].includes(parentName) && fs.existsSync(parent)) {
     return parent;
   }
+
+  const siblingProblems = path.join(path.dirname(configured), "problems");
+  if (fs.existsSync(siblingProblems)) return siblingProblems;
 
   const siblingFixtures = path.join(path.dirname(configured), "fixtures");
   if (fs.existsSync(siblingFixtures)) return siblingFixtures;
@@ -558,7 +667,15 @@ function readStatus(problemPath) {
   }
 }
 
-function clearAllSimulationResults(labsRoot) {
+async function clearAllSimulationResults(labsRoot, output) {
+  if (isGitRepository(labsRoot)) {
+    output.clear();
+    output.show(true);
+    output.appendLine(`[playV] resetting simulation results in ${labsRoot}`);
+    await resetGitSimulationResults(labsRoot, output);
+    return 0;
+  }
+
   const problemDirs = findProblemDirectories(labsRoot);
   let removed = 0;
 
@@ -574,6 +691,19 @@ function clearAllSimulationResults(labsRoot) {
   }
 
   return removed;
+}
+
+function isGitRepository(dirPath) {
+  return fs.existsSync(path.join(dirPath, ".git"));
+}
+
+async function resetGitSimulationResults(labsRoot, output) {
+  const simPathspec = ":(glob)**/sim/*";
+
+  await runGitCommand(["-C", labsRoot, "reset", "--", simPathspec], labsRoot, output);
+  await runGitCommand(["-C", labsRoot, "restore", "--source=HEAD", "--staged", "--worktree", "--", simPathspec], labsRoot, output);
+  await runGitCommand(["-C", labsRoot, "clean", "-fdX", "--", simPathspec], labsRoot, output);
+  await runGitCommand(["-C", labsRoot, "clean", "-fd", "--", simPathspec], labsRoot, output);
 }
 
 function findProblemDirectories(labsRoot) {
